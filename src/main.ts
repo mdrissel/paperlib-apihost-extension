@@ -73,7 +73,7 @@ class PaperlibAPIHostExtension extends PLExtension {
     }
 
     const urlComponents = req.url.split("/").filter((c) => c);
-    const rpcPath = urlComponents[0];
+    const rpcPath = urlComponents[0].split("?")[0];
     const [APIGroup, serviceName, methodName] = rpcPath.split(".");
 
     if (!["PLAPI", "PLMainAPI", "PLExtAPI"].includes(APIGroup)) {
@@ -83,22 +83,47 @@ class PaperlibAPIHostExtension extends PLExtension {
         true,
         "APIHostExt",
       );
+      res.writeHead(400, { "Content-Type": "text/plain" });
+      res.end("Bad Request: Unsupported API Group");
+      return;
     }
 
-    let args = []
-    if (req.url.includes("?args=")) {
-      args = JSON.parse(decodeURIComponent(req.url.split("?args=")[1]))
+    let args: any[] = [];
+    if (req.method === "POST") {
+      let body = '';
+      req.on('data', chunk => {
+          body += chunk.toString();
+      });
+      req.on('end', async () => {
+          try {
+            if (body) {
+                args = JSON.parse(body);
+            }
+            await this._executeCommand(APIGroup, serviceName, methodName, args, res);
+          } catch (e) {
+            res.writeHead(400, { "Content-Type": "text/plain" });
+            res.end("Bad Request: Invalid JSON body");
+          }
+      });
+      return;
+    } else {
+      if (req.url.includes("?args=")) {
+        args = JSON.parse(decodeURIComponent(req.url.split("?args=")[1]));
+      }
+      await this._executeCommand(APIGroup, serviceName, methodName, args, res);
     }
+  }
 
+  private async _executeCommand(APIGroup: string, serviceName: string, methodName: string, args: any[], res: ServerResponse) {
     try {
-      const result = await globalThis[APIGroup][
+      const result = await (globalThis as any)[APIGroup][
         serviceName
       ][methodName](...args);
       if (result) {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(result));
       } else {
-        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({}));
       }
     } catch (e) {
